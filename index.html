@@ -179,7 +179,16 @@
     pre { overflow: auto; padding: 1rem; border: 1px solid var(--cp-border); border-radius: 0.625rem; background: var(--cp-surface); }
     pre code { padding: 0; background: transparent; color: var(--cp-text); }
     .markdown-body img { display: block; max-width: 100%; height: auto; margin: 1.5rem auto 0.5rem; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); box-shadow: 0 0 2px var(--cp-border), 0 1px 2px var(--cp-border); }
-    .mermaid { margin: 1.5rem 0; overflow-x: auto; padding: 1rem; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); text-align: center; }
+    .mermaid { position: relative; margin: 1.5rem 0; overflow: hidden; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); }
+    .diagram-toolbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: flex-end; gap: 0.25rem; min-height: 3rem; padding: 0.4rem 0.55rem; border-bottom: 1px solid var(--cp-border); background: var(--cp-panel-strong); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+    .diagram-toolbar-label { margin-right: auto; color: var(--cp-text-muted); font: 700 0.72rem Consolas, "Courier New", Courier, monospace; letter-spacing: 0.06em; text-transform: uppercase; }
+    .diagram-button { min-width: 2.4rem; min-height: 2.15rem; padding: 0.25rem 0.55rem; border: 1px solid var(--cp-border); border-radius: 0.5rem; background: var(--cp-surface); color: var(--cp-text); cursor: pointer; }
+    .diagram-button:hover:not(:disabled) { border-color: var(--cp-accent); color: var(--cp-accent); background: var(--cp-accent-soft); }
+    .diagram-button:disabled { color: var(--cp-text-muted); cursor: not-allowed; opacity: 0.55; }
+    .diagram-zoom-level { min-width: 3.4rem; color: var(--cp-text-muted); font: 700 0.78rem Consolas, "Courier New", Courier, monospace; text-align: center; }
+    .diagram-viewport { width: 100%; max-height: 75vh; overflow: auto; padding: 1rem; text-align: center; overscroll-behavior: contain; }
+    .diagram-canvas { position: relative; margin: 0 auto; }
+    .diagram-canvas svg { position: absolute; top: 0; left: 50%; display: block; max-width: none; height: auto; transform-origin: top center; }
     hr { margin: 3rem 0; border: 0; border-top: 1px solid var(--cp-border); }
     mark { padding: 0.05rem 0.15rem; background: var(--cp-highlight); color: var(--cp-text); }
     .footer { padding: 2rem clamp(1rem, 4vw, 4rem); border-top: 1px solid var(--cp-border); color: var(--cp-text-muted); text-align: center; }
@@ -201,13 +210,17 @@
     }
     @media (prefers-reduced-motion: reduce) {
       html { scroll-behavior: auto; }
-      *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+      *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0s !important; }
     }
     @media print {
       .topbar, .sidebar, .back-top { display: none; }
       .shell { display: block; max-width: none; padding: 0; }
       .hero { padding: 2rem 0; }
       .markdown-body h2 { break-after: avoid; }
+      .diagram-toolbar { display: none; }
+      .diagram-viewport { max-height: none; overflow: visible; padding: 0; }
+      .diagram-canvas { width: 100% !important; height: auto !important; }
+      .diagram-canvas svg { position: static; width: 100% !important; transform: none !important; }
       .table-wrap, .mermaid, img { break-inside: avoid; }
     }
   </style>
@@ -333,6 +346,103 @@
       });
     }
 
+    function enhanceDiagram(node, index, lang) {
+      const svg = node.querySelector("svg");
+      if (!svg) return;
+
+      svg.removeAttribute("height");
+      svg.removeAttribute("width");
+      svg.style.maxWidth = "none";
+      svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", lang === "id" ? `Diagram arsitektur ${index + 1}` : `Architecture diagram ${index + 1}`);
+
+      const toolbar = document.createElement("div");
+      toolbar.className = "diagram-toolbar";
+
+      const label = document.createElement("span");
+      label.className = "diagram-toolbar-label";
+      label.textContent = lang === "id" ? `Diagram ${index + 1}` : `Diagram ${index + 1}`;
+
+      const viewport = document.createElement("div");
+      viewport.className = "diagram-viewport";
+
+      const canvas = document.createElement("div");
+      canvas.className = "diagram-canvas";
+
+      const level = document.createElement("span");
+      level.className = "diagram-zoom-level";
+      level.setAttribute("aria-live", "polite");
+
+      let zoom = 1;
+      const minimumZoom = 0.5;
+      const maximumZoom = 3;
+      const zoomStep = 0.25;
+
+      const viewportContentWidth = () => {
+        const styles = getComputedStyle(viewport);
+        return Math.max(1, viewport.clientWidth - parseFloat(styles.paddingLeft) - parseFloat(styles.paddingRight));
+      };
+
+      const button = (text, accessibleName, action) => {
+        const element = document.createElement("button");
+        element.type = "button";
+        element.className = "diagram-button";
+        element.textContent = text;
+        element.setAttribute("aria-label", accessibleName);
+        element.addEventListener("click", action);
+        return element;
+      };
+
+      const applyZoom = nextZoom => {
+        const oldWidth = viewport.scrollWidth || viewport.clientWidth;
+        const oldHeight = viewport.scrollHeight || viewport.clientHeight;
+        const centerX = oldWidth ? (viewport.scrollLeft + viewport.clientWidth / 2) / oldWidth : 0.5;
+        const centerY = oldHeight ? (viewport.scrollTop + viewport.clientHeight / 2) / oldHeight : 0.5;
+
+        zoom = Math.min(maximumZoom, Math.max(minimumZoom, nextZoom));
+        const baseWidth = viewportContentWidth();
+        const viewBox = svg.viewBox.baseVal;
+        const baseHeight = viewBox.width > 0 ? baseWidth * viewBox.height / viewBox.width : svg.getBoundingClientRect().height;
+        canvas.style.width = `${baseWidth * zoom}px`;
+        canvas.style.height = `${baseHeight * zoom}px`;
+        svg.style.width = `${baseWidth}px`;
+        svg.style.transform = `translateX(-50%) scale(${zoom})`;
+        level.textContent = `${Math.round(zoom * 100)}%`;
+        zoomOut.disabled = zoom <= minimumZoom;
+        zoomIn.disabled = zoom >= maximumZoom;
+
+        requestAnimationFrame(() => {
+          viewport.scrollLeft = Math.max(0, centerX * viewport.scrollWidth - viewport.clientWidth / 2);
+          viewport.scrollTop = Math.max(0, centerY * viewport.scrollHeight - viewport.clientHeight / 2);
+        });
+      };
+
+      const zoomOut = button("−", lang === "id" ? "Perkecil diagram" : "Zoom out diagram", () => applyZoom(zoom - zoomStep));
+      const reset = button("Fit", lang === "id" ? "Sesuaikan diagram ke lebar panel" : "Fit diagram to panel", () => applyZoom(1));
+      const zoomIn = button("+", lang === "id" ? "Perbesar diagram" : "Zoom in diagram", () => applyZoom(zoom + zoomStep));
+
+      toolbar.append(label, zoomOut, level, zoomIn, reset);
+      canvas.appendChild(svg);
+      viewport.appendChild(canvas);
+      node.replaceChildren(toolbar, viewport);
+
+      svg.getBoundingClientRect();
+      try {
+        const bounds = svg.getBBox();
+        const padding = 24;
+        if (bounds.width > 0 && bounds.height > 0) {
+          svg.setAttribute(
+            "viewBox",
+            `${bounds.x - padding} ${bounds.y - padding} ${bounds.width + padding * 2} ${bounds.height + padding * 2}`
+          );
+        }
+      } catch {
+        // Keep Mermaid's original viewBox if the browser can't calculate the SVG bounds.
+      }
+      applyZoom(1);
+    }
+
     async function loadDocument(lang) {
       language = lang;
       status.hidden = false;
@@ -365,6 +475,7 @@
         }
         status.hidden = true;
         content.hidden = false;
+        content.querySelectorAll(".mermaid").forEach((node, index) => enhanceDiagram(node, index, lang));
         search.value = "";
         document.title = lang === "id" ? "Arsitektur L400 — Copilot Studio, Foundry, dan SAP" : "L400 Architecture — Copilot Studio, Foundry, and SAP";
       } catch (error) {
