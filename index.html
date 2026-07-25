@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="L400 reference architecture for Copilot Studio, Microsoft Foundry, SAP integration, and multi-model AI.">
+  <title>Copilot Studio × Foundry × SAP — L400 Architecture</title>
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("scoutTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--cp-bg);
+      color: var(--cp-text);
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.65;
+    }
+    button, input { font: inherit; }
+    a { color: var(--cp-link); text-underline-offset: 0.2em; }
+    a:hover { text-decoration-thickness: 0.14em; }
+    :focus-visible { outline: 3px solid var(--cp-accent); outline-offset: 3px; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      min-height: 4rem;
+      padding: 0.65rem clamp(1rem, 3vw, 2.5rem);
+      border-bottom: 1px solid var(--cp-border);
+      background: var(--cp-panel-strong);
+      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(12px);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      min-width: 0;
+      margin-right: auto;
+      font-weight: 700;
+    }
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 2rem;
+      height: 2rem;
+      border: 1px solid var(--cp-accent);
+      border-radius: 0.625rem;
+      color: var(--cp-accent);
+      font: 700 0.78rem Consolas, "Courier New", Courier, monospace;
+    }
+    .brand-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .control {
+      min-height: 2.5rem;
+      padding: 0.45rem 0.8rem;
+      border: 1px solid var(--cp-border);
+      border-radius: 0.625rem;
+      background: var(--cp-surface);
+      color: var(--cp-text);
+      cursor: pointer;
+    }
+    .control:hover { border-color: var(--cp-border-strong); background: var(--cp-surface-soft); }
+    .lang-switch { display: flex; gap: 0.25rem; padding: 0.2rem; border: 1px solid var(--cp-border); border-radius: 0.625rem; background: var(--cp-surface-soft); }
+    .lang-button { border: 0; min-height: 2rem; padding: 0.25rem 0.65rem; border-radius: 0.5rem; background: transparent; color: var(--cp-text-muted); cursor: pointer; }
+    .lang-button[aria-pressed="true"] { background: var(--cp-accent); color: var(--cp-accent-fg); }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(3.25rem, 8vw, 7rem) clamp(1rem, 6vw, 5.5rem) clamp(2.5rem, 6vw, 5rem);
+      border-bottom: 1px solid var(--cp-border);
+      background: var(--cp-bg-elevated);
+    }
+    .hero::after {
+      content: "MODEL ≠ AGENT ≠ TOOL";
+      position: absolute;
+      right: -1.5rem;
+      bottom: -1rem;
+      color: var(--cp-accent-soft);
+      font: 800 clamp(2.5rem, 8vw, 7.5rem)/1 Consolas, "Courier New", Courier, monospace;
+      letter-spacing: -0.08em;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    .hero-inner { position: relative; z-index: 1; max-width: 78rem; margin: 0 auto; }
+    .eyebrow { margin: 0 0 1rem; color: var(--cp-accent); font: 700 0.78rem/1.4 Consolas, "Courier New", Courier, monospace; letter-spacing: 0.12em; text-transform: uppercase; }
+    .hero h1 { max-width: 18ch; margin: 0; font-size: clamp(2.5rem, 7vw, 6.75rem); line-height: 0.97; letter-spacing: -0.055em; }
+    .hero-lead { max-width: 52rem; margin: 1.6rem 0 0; color: var(--cp-text-muted); font-size: clamp(1.05rem, 2vw, 1.35rem); }
+    .hero-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; max-width: 62rem; margin-top: 2.5rem; border: 1px solid var(--cp-border); border-radius: 16px; overflow: hidden; background: var(--cp-border); }
+    .hero-stat { padding: 1rem; background: var(--cp-surface); }
+    .hero-stat strong { display: block; color: var(--cp-accent); font-size: 1.25rem; }
+    .hero-stat span { color: var(--cp-text-muted); font-size: 0.82rem; }
+    .shell { display: grid; grid-template-columns: minmax(15rem, 19rem) minmax(0, 1fr); gap: clamp(1.5rem, 4vw, 4rem); max-width: 96rem; margin: 0 auto; padding: clamp(1.5rem, 4vw, 4rem); }
+    .sidebar { position: sticky; top: 5.5rem; align-self: start; max-height: calc(100vh - 7rem); overflow: auto; padding: 1rem; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); box-shadow: 0 0 2px var(--cp-border), 0 1px 2px var(--cp-border); }
+    .search-wrap { position: relative; margin-bottom: 1rem; }
+    .search { width: 100%; min-height: 2.75rem; padding: 0.55rem 0.75rem; border: 1px solid var(--cp-border); border-radius: 0.625rem; background: var(--cp-bg-elevated); color: var(--cp-text); }
+    .toc-title { margin: 0.5rem 0; color: var(--cp-text-muted); font: 700 0.72rem Consolas, "Courier New", Courier, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+    .toc { display: grid; gap: 0.15rem; }
+    .toc a { display: block; padding: 0.42rem 0.55rem; border-radius: 0.5rem; color: var(--cp-text-muted); font-size: 0.88rem; line-height: 1.35; text-decoration: none; }
+    .toc a:hover, .toc a.active { background: var(--cp-accent-soft); color: var(--cp-accent); }
+    .content { min-width: 0; max-width: 70rem; }
+    .status { padding: 1rem 1.25rem; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); color: var(--cp-text-muted); }
+    .markdown-body { padding-bottom: 5rem; }
+    .markdown-body > h1:first-child { display: none; }
+    .markdown-body h2 { margin: 4rem 0 1.25rem; padding-top: 1rem; border-top: 1px solid var(--cp-border); font-size: clamp(1.65rem, 4vw, 2.6rem); line-height: 1.15; letter-spacing: -0.035em; }
+    .markdown-body h3 { margin: 2.5rem 0 1rem; font-size: clamp(1.25rem, 2vw, 1.65rem); line-height: 1.25; }
+    .markdown-body h4 { margin-top: 2rem; color: var(--cp-accent); font-size: 1.08rem; }
+    .markdown-body h5 { margin: 1.7rem 0 0.7rem; font: 700 0.84rem Consolas, "Courier New", Courier, monospace; letter-spacing: 0.04em; text-transform: uppercase; }
+    .markdown-body p, .markdown-body li { max-width: 78ch; }
+    .markdown-body blockquote { margin: 1.5rem 0; padding: 1rem 1.25rem; border-left: 4px solid var(--cp-accent); border-radius: 0 0.625rem 0.625rem 0; background: var(--cp-accent-soft); }
+    .markdown-body blockquote p { margin: 0; }
+    .table-wrap { margin: 1.5rem 0; overflow-x: auto; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 0.75rem 0.85rem; border-bottom: 1px solid var(--cp-border); text-align: left; vertical-align: top; }
+    th { background: var(--cp-surface-soft); color: var(--cp-text); font-weight: 700; }
+    tr:last-child td { border-bottom: 0; }
+    code { padding: 0.12rem 0.35rem; border-radius: 0.35rem; background: var(--cp-surface-soft); color: var(--cp-accent); font-family: Consolas, "Courier New", Courier, monospace; font-size: 0.9em; }
+    pre { overflow: auto; padding: 1rem; border: 1px solid var(--cp-border); border-radius: 0.625rem; background: var(--cp-surface); }
+    pre code { padding: 0; background: transparent; color: var(--cp-text); }
+    .markdown-body img { display: block; max-width: 100%; height: auto; margin: 1.5rem auto 0.5rem; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); box-shadow: 0 0 2px var(--cp-border), 0 1px 2px var(--cp-border); }
+    .mermaid { margin: 1.5rem 0; overflow-x: auto; padding: 1rem; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); text-align: center; }
+    hr { margin: 3rem 0; border: 0; border-top: 1px solid var(--cp-border); }
+    mark { padding: 0.05rem 0.15rem; background: var(--cp-highlight); color: var(--cp-text); }
+    .footer { padding: 2rem clamp(1rem, 4vw, 4rem); border-top: 1px solid var(--cp-border); color: var(--cp-text-muted); text-align: center; }
+    .back-top { position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 30; width: 2.75rem; height: 2.75rem; border: 1px solid var(--cp-border); border-radius: 0.625rem; background: var(--cp-surface); color: var(--cp-accent); box-shadow: 0 0 2px var(--cp-border), 0 1px 2px var(--cp-border); cursor: pointer; }
+    .loading { min-height: 40vh; display: grid; place-items: center; color: var(--cp-text-muted); }
+    @media (max-width: 900px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { position: static; max-height: none; }
+      .toc { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .hero-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .brand-text { display: none; }
+    }
+    @media (max-width: 560px) {
+      .topbar { flex-wrap: wrap; }
+      .lang-switch { order: 3; width: 100%; }
+      .lang-button { flex: 1; }
+      .hero-grid, .toc { grid-template-columns: 1fr; }
+      .shell { padding: 1rem; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+    }
+    @media print {
+      .topbar, .sidebar, .back-top { display: none; }
+      .shell { display: block; max-width: none; padding: 0; }
+      .hero { padding: 2rem 0; }
+      .markdown-body h2 { break-after: avoid; }
+      .table-wrap, .mermaid, img { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">L4</span><span class="brand-text">Enterprise AI Architecture Reference</span></div>
+    <div class="lang-switch" aria-label="Document language">
+      <button class="lang-button" type="button" data-lang="en" aria-pressed="true">English</button>
+      <button class="lang-button" type="button" data-lang="id" aria-pressed="false">Bahasa Indonesia</button>
+    </div>
+    <button class="control" id="theme-toggle" type="button" aria-label="Toggle color theme">Theme</button>
+    <button class="control" id="print-button" type="button">Print</button>
+  </header>
+
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-inner">
+      <p class="eyebrow">Architecture reference · L400 · 26 July 2026</p>
+      <h1 id="hero-title">Copilot Studio × Foundry × SAP</h1>
+      <p class="hero-lead">A bilingual, evidence-based reference for enterprise model selection, SAP integration, specialist agents, and governed multi-model routing.</p>
+      <div class="hero-grid" aria-label="Document highlights">
+        <div class="hero-stat"><strong>2</strong><span>Languages</span></div>
+        <div class="hero-stat"><strong>4</strong><span>Architecture diagrams</span></div>
+        <div class="hero-stat"><strong>29</strong><span>Microsoft Learn references</span></div>
+        <div class="hero-stat"><strong>L400</strong><span>Technical depth</span></div>
+      </div>
+    </div>
+  </section>
+
+  <main class="shell">
+    <aside class="sidebar" aria-label="Page navigation">
+      <div class="search-wrap"><input class="search" id="search" type="search" placeholder="Search this document" aria-label="Search this document"></div>
+      <p class="toc-title">On this page</p>
+      <nav class="toc" id="toc"></nav>
+    </aside>
+    <article class="content">
+      <div class="status" id="status">Loading the architecture reference…</div>
+      <div class="markdown-body" id="content" hidden></div>
+    </article>
+  </main>
+
+  <footer class="footer">Product and platform names belong to their respective owners. Validate preview status, availability, and limits before production deployment.</footer>
+  <button class="back-top" id="back-top" type="button" aria-label="Back to top">↑</button>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs";
+
+    const files = { en: "assets/architecture-en.md", id: "assets/architecture-id.md" };
+    const content = document.getElementById("content");
+    const status = document.getElementById("status");
+    const toc = document.getElementById("toc");
+    const search = document.getElementById("search");
+    let language = new URLSearchParams(location.search).get("lang") === "id" ? "id" : "en";
+    let rawMarkdown = "";
+
+    const getTheme = () => getComputedStyle(document.documentElement);
+    const configureMermaid = () => {
+      const theme = getTheme();
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "loose",
+        theme: "base",
+        themeVariables: {
+          background: theme.getPropertyValue("--cp-surface").trim(),
+          primaryColor: theme.getPropertyValue("--cp-accent-soft").trim(),
+          primaryTextColor: theme.getPropertyValue("--cp-text").trim(),
+          primaryBorderColor: theme.getPropertyValue("--cp-accent").trim(),
+          lineColor: theme.getPropertyValue("--cp-text-muted").trim(),
+          secondaryColor: theme.getPropertyValue("--cp-surface-soft").trim(),
+          tertiaryColor: theme.getPropertyValue("--cp-bg-elevated").trim(),
+          noteBkgColor: theme.getPropertyValue("--cp-surface-soft").trim(),
+          noteTextColor: theme.getPropertyValue("--cp-text").trim(),
+          fontFamily: '"Segoe UI", Aptos, Calibri, sans-serif'
+        }
+      });
+    };
+
+    marked.use({
+      gfm: true,
+      renderer: {
+        code(codeText, infoString) {
+          const languageName = (infoString || "").trim().split(/\s+/)[0];
+          if (languageName === "mermaid") {
+            const sanitized = codeText
+              .split("\n")
+              .filter(line => !line.trim().startsWith("%%{init:") && !line.trim().startsWith("classDef ") && !line.trim().startsWith("class "))
+              .join("\n");
+            return `<div class="mermaid">${sanitized.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</div>`;
+          }
+          return `<pre><code class="language-${languageName}">${codeText.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</code></pre>`;
+        }
+      }
+    });
+
+    const slugify = text => text.toLowerCase().replace(/[^a-z0-9\s-]/g, "").trim().replace(/\s+/g, "-");
+
+    function prepareDocument() {
+      content.querySelectorAll("h2, h3").forEach((heading, index) => {
+        heading.id = `${slugify(heading.textContent) || "section"}-${index}`;
+      });
+      content.querySelectorAll("table").forEach(table => {
+        const wrap = document.createElement("div");
+        wrap.className = "table-wrap";
+        table.parentNode.insertBefore(wrap, table);
+        wrap.appendChild(table);
+      });
+      content.querySelectorAll("a[href^='http']").forEach(link => {
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+      });
+      buildToc();
+    }
+
+    function buildToc() {
+      toc.innerHTML = "";
+      content.querySelectorAll("h2").forEach(heading => {
+        const link = document.createElement("a");
+        link.href = `#${heading.id}`;
+        link.textContent = heading.textContent;
+        toc.appendChild(link);
+      });
+    }
+
+    async function loadDocument(lang) {
+      language = lang;
+      status.hidden = false;
+      content.hidden = true;
+      status.textContent = lang === "id" ? "Memuat referensi arsitektur…" : "Loading the architecture reference…";
+      document.documentElement.lang = lang;
+      document.querySelectorAll(".lang-button").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.lang === lang)));
+      const url = new URL(location.href);
+      url.searchParams.set("lang", lang);
+      history.replaceState(null, "", url);
+      try {
+        const response = await fetch(files[lang], { cache: "no-cache" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        rawMarkdown = await response.text();
+        content.innerHTML = DOMPurify.sanitize(marked.parse(rawMarkdown), { ADD_TAGS: ["foreignObject"] });
+        prepareDocument();
+        configureMermaid();
+        await Promise.allSettled(
+          [...content.querySelectorAll(".mermaid")].map(node => mermaid.run({ nodes: [node], suppressErrors: true }))
+        );
+        status.hidden = true;
+        content.hidden = false;
+        search.value = "";
+        document.title = lang === "id" ? "Arsitektur L400 — Copilot Studio, Foundry, dan SAP" : "L400 Architecture — Copilot Studio, Foundry, and SAP";
+      } catch (error) {
+        status.textContent = lang === "id" ? `Dokumen gagal dimuat: ${error.message}` : `The document could not be loaded: ${error.message}`;
+      }
+    }
+
+    function highlightSearch(query) {
+      const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      while (walker.nextNode()) {
+        if (!walker.currentNode.parentElement.closest("script, style, code, pre, .mermaid")) nodes.push(walker.currentNode);
+      }
+      content.querySelectorAll("mark[data-search]").forEach(mark => mark.replaceWith(document.createTextNode(mark.textContent)));
+      if (!query || query.length < 2) return;
+      const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`(${escaped})`, "gi");
+      let first = null;
+      nodes.forEach(node => {
+        if (!regex.test(node.nodeValue)) return;
+        regex.lastIndex = 0;
+        const fragment = document.createDocumentFragment();
+        node.nodeValue.split(regex).forEach(part => {
+          if (part.toLowerCase() === query.toLowerCase()) {
+            const mark = document.createElement("mark");
+            mark.dataset.search = "true";
+            mark.textContent = part;
+            first ||= mark;
+            fragment.appendChild(mark);
+          } else fragment.appendChild(document.createTextNode(part));
+        });
+        node.replaceWith(fragment);
+      });
+      first?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    document.querySelectorAll(".lang-button").forEach(button => button.addEventListener("click", () => loadDocument(button.dataset.lang)));
+    document.getElementById("theme-toggle").addEventListener("click", async () => {
+      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      await loadDocument(language);
+    });
+    document.getElementById("print-button").addEventListener("click", () => window.print());
+    document.getElementById("back-top").addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+    search.addEventListener("input", event => highlightSearch(event.target.value.trim()));
+
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        toc.querySelectorAll("a").forEach(link => link.classList.toggle("active", link.getAttribute("href") === `#${entry.target.id}`));
+      });
+    }, { rootMargin: "-20% 0px -70%" });
+    new MutationObserver(() => content.querySelectorAll("h2").forEach(heading => observer.observe(heading))).observe(content, { childList: true });
+
+    loadDocument(language);
+  </script>
+</body>
+</html>
