@@ -587,6 +587,122 @@ Nilai setiap skenario berdasarkan:
 | Requirement bahwa model harus sama pada setiap request | Direct deployment | Pin fixed model dan version | Hindari nondeterminism dari model router |
 | Strict data-residency workload | Governance policy | Model dan deployment yang memenuhi region requirement | Jangan memakai [cross-geo model](https://learn.microsoft.com/microsoft-copilot-studio/authoring-select-agent-model#model-availability-by-region) tanpa persetujuan |
 
+### Menentukan skenario mana yang terhubung ke model atau agent tertentu
+
+Gunakan **dua keputusan routing yang terpisah**. Jangan menggabungkannya menjadi satu prompt yang tidak transparan:
+
+1. **Scenario atau agent routing:** Tentukan business domain, kemudian delegasikan ke agent, workflow, atau tool yang sesuai. Routing connected agent di Copilot Studio menggunakan nama dan deskripsi agent, pesan user, conversation context, serta instruksi primary agent ([Microsoft Learn](https://learn.microsoft.com/microsoft-copilot-studio/agents-experience/add-agent-connected#how-the-orchestrator-routes-to-connected-agents)).
+2. **Model routing di dalam domain terpilih:** Pilih fixed model atau approved model pool berdasarkan task fit, complexity, latency, cost, context, region, dan compliance. Microsoft merekomendasikan evaluasi task fit per model, manual selection untuk critical path yang harus predictable, serta automatic routing untuk workload yang bervariasi ([Microsoft Learn](https://learn.microsoft.com/azure/architecture/ai-ml/guide/choose-ai-model#key-criteria-for-model-selection)).
+
+Scenario router tidak boleh memperlakukan **Joule sebagai LLM model**. Joule adalah SAP digital assistant/agent. Claude adalah keluarga LLM. Topologinya adalah **routing agent/workflow terlebih dahulu**, kemudian **pemilihan model di dalam agent yang terpilih**.
+
+```mermaid
+flowchart LR
+   REQ["Authenticated request"] --> SR{"Scenario router"}
+
+   SR -->|"Contact center: general service"| CC["Contact Center agent"]
+   SR -->|"SAP built-in Joule capability"| JPATH["Managed Microsoft 365 Copilot / Teams to Joule path"]
+   SR -->|"Developer workflow"| DEV["Developer specialist agent"]
+   SR -->|"High-impact transaction"| WF["Deterministic workflow and approval"]
+
+   CC --> CCP{"Contact-center policy"}
+   CCP -->|"Conversation, summarization, complex reasoning"| CCLAUDE["Approved Claude deployment"]
+   CCP -->|"Live business data"| CTOOLS["CRM, knowledge, and SAP API tools"]
+   CCP -->|"Low confidence or consequential request"| HUMAN["Human escalation"]
+
+   JPATH --> JOULE["SAP Joule agent"]
+   JOULE --> SAP["SAP applications and authorizations"]
+
+   DEV --> DP{"Developer policy"}
+   DP -->|"Coding and code analysis"| DCLAUDE["Approved Claude deployment"]
+   DP -->|"Repository, CI/CD, documentation"| DTOOLS["MCP or governed developer tools"]
+
+   WF --> APPROVAL["Validation, segregation of duties, approval"]
+
+   CCLAUDE --> OBS["Evaluation, telemetry, cost, and safety"]
+   DCLAUDE --> OBS
+   CTOOLS --> OBS
+   DTOOLS --> OBS
+```
+
+*Dasar arsitektur: route ke connected agents melalui metadata yang distinct dan primary instructions ([Microsoft Learn](https://learn.microsoft.com/microsoft-copilot-studio/agents-experience/add-agent-connected#how-the-orchestrator-routes-to-connected-agents)); pilih model berdasarkan task fit, cost, latency, dan compliance ([Microsoft Learn](https://learn.microsoft.com/azure/architecture/ai-ml/guide/choose-ai-model#key-criteria-for-model-selection)); gunakan Joule melalui managed integration Microsoft 365 Copilot/Teams untuk built-in SAP scenarios yang didukung ([Microsoft Learn](https://learn.microsoft.com/azure/sap/microsoft-ai/joule/joule-copilot-overview)).*
+
+#### Skenario 1: Contact Center menggabungkan Claude dan Joule
+
+Pola yang direkomendasikan **bukan** mengirim satu prompt ke Claude dan Joule lalu menggabungkan dua jawaban free-form yang belum diverifikasi. Gunakan capability boundaries:
+
+| Keputusan | Route | Aturan implementasi |
+|---|---|---|
+| Percakapan contact center umum, summarization, classification, atau response drafting | Contact Center agent dengan approved Claude model | Pilih Claude yang tersedia untuk environment dan region; validasi quality, latency, dan data handling terhadap [tabel model Copilot Studio terkini](https://learn.microsoft.com/microsoft-copilot-studio/authoring-select-agent-model#model-availability-by-region) |
+| Pertanyaan SAP built-in yang didukung Joule, misalnya saldo cuti, procurement, atau status invoice | Managed Microsoft 365 Copilot/Teams → `@Joule` → SAP Joule | Managed integration meneruskan explicit SAP request ke Joule dan mempertahankan SAP identity mapping ([Microsoft Learn](https://learn.microsoft.com/azure/sap/microsoft-ai/joule/joule-copilot-overview#architecture-overview)) |
+| Custom Contact Center agent membutuhkan SAP data atau action | Copilot Studio/Foundry agent → SAP OData, BTP, APIM, atau MCP tool | Jangan mengasumsikan managed Joule integration dapat dipanggil custom Copilot Studio agent; Microsoft mendokumentasikan bahwa custom agents dan skills tidak dirutekan melalui integrasi tersebut ([Microsoft Learn](https://learn.microsoft.com/azure/sap/microsoft-ai/joule/joule-copilot-overview#limitations-and-known-issues)) |
+| Request mencakup customer conversation dan SAP data | Deterministic workflow mengoordinasikan percakapan berbasis Claude dengan governed SAP API tool; alternatifnya, user memanggil `@Joule` secara eksplisit pada managed channel | Pisahkan source, correlation ID, citation, dan authorization decision; jangan meminta satu model menyamar sebagai agent lainnya |
+| Complaint, financial commitment, perubahan akun, atau hasil dengan confidence rendah | Human handoff atau approval workflow | Tidak ada autonomous model-to-model decision untuk consequential action |
+
+```mermaid
+sequenceDiagram
+   autonumber
+   actor U as Contact-center user
+   participant R as Scenario router
+   participant C as Contact Center agent
+   participant CL as Claude deployment
+   participant T as Governed business tools
+   participant M as Microsoft 365 Copilot or Teams
+   participant J as SAP Joule
+   participant H as Human agent
+
+   U->>R: Submit request
+   alt General service request
+      R->>C: Delegate customer-service task
+      C->>T: Retrieve authorized CRM or knowledge context
+      C->>CL: Draft or reason over approved context
+      CL-->>C: Proposed response
+      C-->>U: Grounded response
+   else Built-in SAP Joule request in managed channel
+      R->>M: Direct user to explicit Joule capability
+      M->>J: Route @Joule request with mapped identity
+      J-->>U: SAP-authorized result
+   else Consequential or low-confidence request
+      R->>H: Escalate with transcript and source metadata
+      H-->>U: Reviewed response or action
+   end
+```
+
+**Batas platform penting:** integrasi bidirectional Joule adalah managed feature SAP dan Microsoft untuk Microsoft 365 Copilot dan Teams. Integrasi ini saat ini tidak diperluas ke custom-built Copilot Studio agents ([Microsoft Learn](https://learn.microsoft.com/azure/sap/microsoft-ai/joule/joule-copilot-overview#limitations-and-known-issues)). Untuk custom contact-center channel, gunakan governed SAP APIs/connectors alih-alih merancang panggilan Copilot Studio-to-Joule yang tidak terdokumentasi.
+
+#### Skenario 2: Developer requests dirutekan ke Claude
+
+Gunakan dedicated Developer agent dengan deskripsi yang distinct, misalnya: “Menangani penjelasan source code, code generation, debugging, test design, dan pull-request analysis. Tidak menangani SAP business transaction atau employee support.” Deskripsi yang distinct mengurangi routing ambiguity ([Microsoft Learn](https://learn.microsoft.com/microsoft-copilot-studio/agents-experience/manage-connected-agents#troubleshoot-routing-issues)).
+
+Policy yang direkomendasikan:
+
+| Developer task | Route | Pola model/tool |
+|---|---|---|
+| Code generation, debugging, refactoring, atau complex code review | Developer specialist agent → approved Claude model | Pin Claude jika consistency dan coding behavior yang sudah diketahui diperlukan; verifikasi lifecycle dan regional availability terkini pada [Microsoft Learn](https://learn.microsoft.com/microsoft-copilot-studio/authoring-select-agent-model#model-availability-by-region) |
+| Repository lookup, build logs, CI/CD status, atau documentation | Developer agent → governed MCP/OpenAPI tools | Model menginterpretasikan hasil; tools tetap menjadi source of truth dan menggunakan least-privilege identity |
+| Simple classification atau high-volume triage | Small fixed model atau Foundry Model Router mode Cost/Balanced | Gunakan automatic routing hanya bila variability dapat diterima; monitor underlying model yang terpilih ([Microsoft Learn](https://learn.microsoft.com/azure/foundry/openai/how-to/model-router-agents#get-started)) |
+| Production deployment, secret access, merge, atau destructive action | Deterministic workflow dengan policy dan approval | Developer model mengusulkan; authorized workflow memvalidasi dan mengeksekusi |
+| SAP development question | Developer agent → SAP documentation/API tool atau dedicated SAP developer agent | Jangan route ke Joule kecuali user memakai documented managed Joule experience dan built-in capability-nya mencakup task tersebut |
+
+#### Template scenario routing policy
+
+Definisikan setiap route sebagai versioned configuration, bukan hanya mengandalkan free-form model judgment:
+
+| Policy field | Contoh Contact Center | Contoh Developer |
+|---|---|---|
+| Route ID | `contact-center-v1` | `developer-v1` |
+| Entry criteria | Customer-service channel atau intent | Authenticated developer role, developer portal, atau coding intent |
+| Primary agent | Contact Center agent | Developer specialist agent |
+| Fixed model | Approved Claude model untuk response drafting/reasoning | Approved Claude model untuk code tasks |
+| Specialist agent/tool | Joule hanya melalui supported managed channel; selain itu SAP/CRM APIs | Repository, CI/CD, documentation, dan test tools |
+| Model Router use | Opsional untuk low-risk triage | Opsional untuk classification dan broad developer Q&A |
+| Data boundary | Customer dan CRM policy | Source-code, secret, dan repository policy |
+| Human gate | Complaint, commitment, perubahan akun | Merge, deploy, secrets, destructive operations |
+| Fallback | Human agent atau safe response | Fixed baseline model atau human reviewer |
+| Required telemetry | Scenario, agent, model, tools, citations, escalation reason | Scenario, agent, selected model, repository/tool calls, approval outcome |
+
+Router sebaiknya mengevaluasi structured signals dalam urutan berikut: **channel dan authenticated role → explicit user selection/tag → data classification dan policy → business intent → agent metadata → model policy**. Dengan urutan ini, compliance dan high-impact boundaries tetap deterministic, sementara generative routing masih dapat digunakan di approved low-risk domains.
+
 ### Routing decision flow
 
 ```mermaid
@@ -1065,6 +1181,10 @@ Semua referensi berikut diakses atau diverifikasi pada **26 Juli 2026**.
 27. [Application design for AI workloads on Azure](https://learn.microsoft.com/azure/well-architected/ai/application-design)
 28. [Technology plan for AI agents](https://learn.microsoft.com/azure/cloud-adoption-framework/ai-agents/technology-solutions-plan-strategy)
 29. [Process to build agents across your organization](https://learn.microsoft.com/azure/cloud-adoption-framework/ai-agents/build-secure-process)
+30. [Cara Copilot Studio melakukan routing ke connected agents - Preview](https://learn.microsoft.com/microsoft-copilot-studio/agents-experience/add-agent-connected#how-the-orchestrator-routes-to-connected-agents)
+31. [Choose the right AI model for your workload](https://learn.microsoft.com/azure/architecture/ai-ml/guide/choose-ai-model)
+32. [Joule and Microsoft 365 Copilot integration](https://learn.microsoft.com/azure/sap/microsoft-ai/joule/joule-copilot-overview)
+33. [Connect an agent over the Agent2Agent protocol](https://learn.microsoft.com/microsoft-copilot-studio/add-agent-agent-to-agent)
 
 ---
 

@@ -230,8 +230,8 @@
       <p class="hero-lead">A bilingual, evidence-based reference for enterprise model selection, SAP integration, specialist agents, and governed multi-model routing.</p>
       <div class="hero-grid" aria-label="Document highlights">
         <div class="hero-stat"><strong>2</strong><span>Languages</span></div>
-        <div class="hero-stat"><strong>4</strong><span>Architecture diagrams</span></div>
-        <div class="hero-stat"><strong>29</strong><span>Microsoft Learn references</span></div>
+        <div class="hero-stat"><strong>6</strong><span>Architecture diagrams</span></div>
+        <div class="hero-stat"><strong>33</strong><span>Microsoft Learn references</span></div>
         <div class="hero-stat"><strong>L400</strong><span>Technical depth</span></div>
       </div>
     </div>
@@ -350,9 +350,19 @@
         content.innerHTML = DOMPurify.sanitize(marked.parse(rawMarkdown), { ADD_TAGS: ["foreignObject"] });
         prepareDocument();
         configureMermaid();
-        await Promise.allSettled(
-          [...content.querySelectorAll(".mermaid")].map(node => mermaid.run({ nodes: [node], suppressErrors: true }))
-        );
+        let diagramIndex = 0;
+        for (const node of content.querySelectorAll(".mermaid")) {
+          const source = node.textContent;
+          try {
+            const rendered = await mermaid.render(`architecture-diagram-${Date.now()}-${diagramIndex++}`, source);
+            node.innerHTML = rendered.svg;
+            rendered.bindFunctions?.(node);
+          } catch (diagramError) {
+            node.textContent = source;
+            node.setAttribute("role", "img");
+            node.setAttribute("aria-label", `Diagram source could not be rendered: ${diagramError.message}`);
+          }
+        }
         status.hidden = true;
         content.hidden = false;
         search.value = "";

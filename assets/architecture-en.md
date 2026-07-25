@@ -587,6 +587,122 @@ Evaluate each scenario based on:
 | Requirement that the same model is used on every request | Direct deployment | Pin fixed model and version | Avoid nondeterminism from model router |
 | Strict data-residency workload | Governance policy | Model and deployment that meet region requirements | Do not use a [cross-geo model](https://learn.microsoft.com/microsoft-copilot-studio/authoring-select-agent-model#model-availability-by-region) without approval |
 
+### Define which scenario connects to which model or agent
+
+Use **two separate routing decisions**. Do not combine them into one opaque prompt:
+
+1. **Scenario or agent routing:** Determine the business domain and delegate to the appropriate agent, workflow, or tool. Copilot Studio connected-agent routing uses the agent name, description, user message, conversation context, and primary-agent instructions ([Microsoft Learn](https://learn.microsoft.com/microsoft-copilot-studio/agents-experience/add-agent-connected#how-the-orchestrator-routes-to-connected-agents)).
+2. **Model routing inside the selected domain:** Select a fixed model or an approved model pool based on task fit, complexity, latency, cost, context, region, and compliance. Microsoft recommends individually evaluating task fit and using manual selection for predictable critical paths while automatic routing is appropriate for variable workloads ([Microsoft Learn](https://learn.microsoft.com/azure/architecture/ai-ml/guide/choose-ai-model#key-criteria-for-model-selection)).
+
+The scenario router must never treat **Joule as an LLM model**. Joule is an SAP digital assistant/agent. Claude is an LLM family. The routing topology is therefore **agent/workflow routing first**, followed by **model selection inside the chosen agent**.
+
+```mermaid
+flowchart LR
+   REQ["Authenticated request"] --> SR{"Scenario router"}
+
+   SR -->|"Contact center: general service"| CC["Contact Center agent"]
+   SR -->|"SAP built-in Joule capability"| JPATH["Managed Microsoft 365 Copilot / Teams to Joule path"]
+   SR -->|"Developer workflow"| DEV["Developer specialist agent"]
+   SR -->|"High-impact transaction"| WF["Deterministic workflow and approval"]
+
+   CC --> CCP{"Contact-center policy"}
+   CCP -->|"Conversation, summarization, complex reasoning"| CCLAUDE["Approved Claude deployment"]
+   CCP -->|"Live business data"| CTOOLS["CRM, knowledge, and SAP API tools"]
+   CCP -->|"Low confidence or consequential request"| HUMAN["Human escalation"]
+
+   JPATH --> JOULE["SAP Joule agent"]
+   JOULE --> SAP["SAP applications and authorizations"]
+
+   DEV --> DP{"Developer policy"}
+   DP -->|"Coding and code analysis"| DCLAUDE["Approved Claude deployment"]
+   DP -->|"Repository, CI/CD, documentation"| DTOOLS["MCP or governed developer tools"]
+
+   WF --> APPROVAL["Validation, segregation of duties, approval"]
+
+   CCLAUDE --> OBS["Evaluation, telemetry, cost, and safety"]
+   DCLAUDE --> OBS
+   CTOOLS --> OBS
+   DTOOLS --> OBS
+```
+
+*Architecture basis: route to connected agents through distinct metadata and primary instructions ([Microsoft Learn](https://learn.microsoft.com/microsoft-copilot-studio/agents-experience/add-agent-connected#how-the-orchestrator-routes-to-connected-agents)); select models by task fit, cost, latency, and compliance ([Microsoft Learn](https://learn.microsoft.com/azure/architecture/ai-ml/guide/choose-ai-model#key-criteria-for-model-selection)); use Joule through its managed Microsoft 365 Copilot/Teams integration for supported built-in SAP scenarios ([Microsoft Learn](https://learn.microsoft.com/azure/sap/microsoft-ai/joule/joule-copilot-overview)).*
+
+#### Scenario 1: Contact Center combining Claude and Joule
+
+The recommended pattern is **not** to send one prompt to both Claude and Joule and merge unverified free-form answers. Use capability boundaries:
+
+| Decision | Route | Implementation rule |
+|---|---|---|
+| General contact-center conversation, summarization, classification, or response drafting | Contact Center agent using an approved Claude model | Select a Claude model available for the environment and region; validate quality, latency, and data handling against the current [Copilot Studio model table](https://learn.microsoft.com/microsoft-copilot-studio/authoring-select-agent-model#model-availability-by-region) |
+| Built-in SAP question supported by Joule, such as leave balance, procurement, or invoice status | Managed Microsoft 365 Copilot/Teams → `@Joule` → SAP Joule | The managed integration routes explicit SAP requests to Joule and preserves the SAP identity mapping ([Microsoft Learn](https://learn.microsoft.com/azure/sap/microsoft-ai/joule/joule-copilot-overview#architecture-overview)) |
+| Custom Contact Center agent needs SAP data or actions | Copilot Studio/Foundry agent → SAP OData, BTP, APIM, or MCP tool | Do **not** assume the managed Joule integration can be called by a custom Copilot Studio agent; Microsoft documents that custom agents and skills aren't routed through this integration ([Microsoft Learn](https://learn.microsoft.com/azure/sap/microsoft-ai/joule/joule-copilot-overview#limitations-and-known-issues)) |
+| A request spans customer conversation and SAP data | Deterministic workflow coordinates Claude-backed conversation with a governed SAP API tool; alternatively, the user explicitly invokes `@Joule` in the managed channel | Preserve separate sources, correlation IDs, citations, and authorization decisions; don't ask one model to impersonate the other agent |
+| Complaint, financial commitment, account change, or low-confidence result | Human handoff or approval workflow | No autonomous model-to-model decision for consequential actions |
+
+```mermaid
+sequenceDiagram
+   autonumber
+   actor U as Contact-center user
+   participant R as Scenario router
+   participant C as Contact Center agent
+   participant CL as Claude deployment
+   participant T as Governed business tools
+   participant M as Microsoft 365 Copilot or Teams
+   participant J as SAP Joule
+   participant H as Human agent
+
+   U->>R: Submit request
+   alt General service request
+      R->>C: Delegate customer-service task
+      C->>T: Retrieve authorized CRM or knowledge context
+      C->>CL: Draft or reason over approved context
+      CL-->>C: Proposed response
+      C-->>U: Grounded response
+   else Built-in SAP Joule request in managed channel
+      R->>M: Direct user to explicit Joule capability
+      M->>J: Route @Joule request with mapped identity
+      J-->>U: SAP-authorized result
+   else Consequential or low-confidence request
+      R->>H: Escalate with transcript and source metadata
+      H-->>U: Reviewed response or action
+   end
+```
+
+**Important platform boundary:** the bidirectional Joule integration is a managed SAP and Microsoft feature for Microsoft 365 Copilot and Teams. It currently doesn't extend to custom-built Copilot Studio agents ([Microsoft Learn](https://learn.microsoft.com/azure/sap/microsoft-ai/joule/joule-copilot-overview#limitations-and-known-issues)). For a custom contact-center channel, integrate with SAP through governed APIs/connectors instead of designing an undocumented Copilot Studio-to-Joule call.
+
+#### Scenario 2: Developer requests routed to Claude
+
+Use a dedicated Developer agent with a distinct description such as: “Handles source-code explanation, code generation, debugging, test design, and pull-request analysis. Does not handle SAP business transactions or employee support.” Distinct descriptions reduce routing ambiguity ([Microsoft Learn](https://learn.microsoft.com/microsoft-copilot-studio/agents-experience/manage-connected-agents#troubleshoot-routing-issues)).
+
+Recommended policy:
+
+| Developer task | Route | Model/tool pattern |
+|---|---|---|
+| Code generation, debugging, refactoring, or complex code review | Developer specialist agent → approved Claude model | Pin Claude when consistency and known coding behavior are required; verify current model lifecycle and regional availability in [Microsoft Learn](https://learn.microsoft.com/microsoft-copilot-studio/authoring-select-agent-model#model-availability-by-region) |
+| Repository lookup, build logs, CI/CD status, or documentation | Developer agent → governed MCP/OpenAPI tools | The model interprets results; tools remain the source of truth and use least-privilege identity |
+| Simple classification or high-volume triage | Small fixed model or Foundry Model Router Cost/Balanced mode | Use automatic routing only when variability is acceptable; monitor the selected underlying model ([Microsoft Learn](https://learn.microsoft.com/azure/foundry/openai/how-to/model-router-agents#get-started)) |
+| Production deployment, secret access, merge, or destructive action | Deterministic workflow with policy and approval | The developer model proposes; an authorized workflow validates and executes |
+| SAP development question | Developer agent → SAP documentation/API tool or dedicated SAP developer agent | Don't route to Joule unless the user is using the documented managed Joule experience and its built-in capability covers the task |
+
+#### Scenario routing policy template
+
+Define each route as versioned configuration rather than relying only on free-form model judgment:
+
+| Policy field | Contact Center example | Developer example |
+|---|---|---|
+| Route ID | `contact-center-v1` | `developer-v1` |
+| Entry criteria | Customer-service channel or intent | Authenticated developer role, developer portal, or coding intent |
+| Primary agent | Contact Center agent | Developer specialist agent |
+| Fixed model | Approved Claude model for response drafting/reasoning | Approved Claude model for code tasks |
+| Specialist agent/tool | Joule only through supported managed channel; otherwise SAP/CRM APIs | Repository, CI/CD, documentation, and test tools |
+| Model Router use | Optional for low-risk triage | Optional for classification and broad developer Q&A |
+| Data boundary | Customer and CRM policy | Source-code, secret, and repository policy |
+| Human gate | Complaints, commitments, account changes | Merge, deploy, secrets, destructive operations |
+| Fallback | Human agent or safe response | Fixed baseline model or human reviewer |
+| Required telemetry | Scenario, agent, model, tools, citations, escalation reason | Scenario, agent, selected model, repository/tool calls, approval outcome |
+
+The router should evaluate structured signals in this order: **channel and authenticated role → explicit user selection/tag → data classification and policy → business intent → agent metadata → model policy**. This keeps compliance and high-impact boundaries deterministic while still allowing generative routing inside approved low-risk domains.
+
 ### Routing decision flow
 
 ```mermaid
@@ -1065,6 +1181,10 @@ All references below were accessed or verified on **26 July 2026**.
 27. [Application design for AI workloads on Azure](https://learn.microsoft.com/azure/well-architected/ai/application-design)
 28. [Technology plan for AI agents](https://learn.microsoft.com/azure/cloud-adoption-framework/ai-agents/technology-solutions-plan-strategy)
 29. [Process to build agents across your organization](https://learn.microsoft.com/azure/cloud-adoption-framework/ai-agents/build-secure-process)
+30. [How Copilot Studio routes to connected agents - Preview](https://learn.microsoft.com/microsoft-copilot-studio/agents-experience/add-agent-connected#how-the-orchestrator-routes-to-connected-agents)
+31. [Choose the right AI model for your workload](https://learn.microsoft.com/azure/architecture/ai-ml/guide/choose-ai-model)
+32. [Joule and Microsoft 365 Copilot integration](https://learn.microsoft.com/azure/sap/microsoft-ai/joule/joule-copilot-overview)
+33. [Connect an agent over the Agent2Agent protocol](https://learn.microsoft.com/microsoft-copilot-studio/add-agent-agent-to-agent)
 
 ---
 
